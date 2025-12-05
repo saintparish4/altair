@@ -1,4 +1,4 @@
-.PHONY: all build test clean run-discover run-xor-demo help
+.PHONY: all build test test-layer1 test-layer2 test-coverage clean run-discover run-xor-demo help-connect fmt lint help
 
 # Default target
 all: build test
@@ -11,8 +11,18 @@ build:
 
 # Run tests
 test:
-	@echo "Running tests..."
+	@echo "Running all tests..."
 	@go test ./pkg/... -v
+
+# Test only Layer 1 (STUN)
+test-layer1:
+	@echo "Running Layer 1 (STUN) tests..."
+	@go test ./pkg/stun -v
+
+# Test only Layer 2 (Hole Punching)
+test-layer2:
+	@echo "Running Layer 2 (Hole Punching) tests..."
+	@go test ./pkg/holepunch -v
 
 # Run tests with coverage
 test-coverage:
@@ -37,6 +47,11 @@ run-xor-demo:
 	@echo "Running XOR encoding demonstration..."
 	@go run examples/xor-demo.go
 
+# Show connect command help
+help-connect: build
+	@echo "Showing connect command help..."
+	@./altair connect --help
+
 # Format code
 fmt:
 	@echo "Formatting code..."
@@ -53,11 +68,14 @@ lint:
 help:
 	@echo "Available targets:"
 	@echo "  make build          - Build the altair binary"
-	@echo "  make test           - Run unit tests"
+	@echo "  make test           - Run all unit tests"
+	@echo "  make test-layer1    - Run Layer 1 (STUN) tests only"
+	@echo "  make test-layer2    - Run Layer 2 (Hole Punching) tests only"
 	@echo "  make test-coverage  - Run tests with coverage report"
 	@echo "  make clean          - Remove build artifacts"
 	@echo "  make run-discover   - Run STUN discovery"
 	@echo "  make run-xor-demo   - Run XOR encoding demo"
+	@echo "  make help-connect   - Show connect command help"
 	@echo "  make fmt            - Format code"
 	@echo "  make lint           - Run linter (requires golangci-lint)"
 	@echo "  make help           - Show this help message"

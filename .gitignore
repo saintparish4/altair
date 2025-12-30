@@ -21,7 +21,6 @@ go.work
 
 # IDE/Editor files
 .idea/
-.vscode/
 *.swp
 *.swo
 *~
@@ -31,6 +30,8 @@ go.work
 dist/
 build/
 bin/
+altair
+altair-signaling
 
 # Environment files
 .env
@@ -40,3 +41,5 @@ bin/
 # Air live reload
 tmp/
 
+# Extras 
+.cursor

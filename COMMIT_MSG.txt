@@ -1,0 +1,32 @@
+feat: Add P2P chat and file transfer applications
+
+Add two new peer-to-peer applications built on Altair's NAT traversal:
+
+**P2P Chat Application (altair-chat)**
+- Terminal-based chat client with colored output
+- Supports manual peer connection (initiator/responder modes)
+- Message types: TEXT, JOIN, LEAVE, PING/PONG for keepalive
+- Message history with configurable max messages
+- Terminal UI helpers for cursor control and message formatting
+- Commands: /quit, /clear, /status, /help
+- Placeholder for signaling server integration
+
+**P2P File Transfer Application (altair-transfer)**
+- Send and receive files directly between peers
+- Chunked transfer protocol (64KB chunks)
+- SHA-256 hash verification for file integrity
+- Progress tracking with ETA and transfer speed
+- Terminal progress bar visualization
+- Interactive file acceptance prompt
+- Supports files up to 10GB
+- Placeholder for signaling server integration
+
+**Package Structure:**
+- `backend/pkg/chat/`: Chat protocol implementation with session management
+- `backend/pkg/transfer/`: File transfer protocol with sender/receiver logic
+- `backend/cmd/chat/`: Chat CLI application entry point
+- `backend/cmd/transfer/`: File transfer CLI application entry point
+
+Both applications support manual TCP connection mode and are designed
+to integrate with Altair's hole punching system for NAT traversal.
+

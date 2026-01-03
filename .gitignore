@@ -31,8 +31,9 @@ go.work
 dist/
 build/
 bin/
-altair
-altair-signaling
+/altair
+/altair-*
+*.exe
 
 # Environment files
 .env
@@ -42,5 +43,19 @@ altair-signaling
 # Air live reload
 tmp/
 
+# Frontend
+node_modules/
+.next/
+out/
+.turbo/
+
 # Extras 
 .cursor
+
+# Example binaries
+examples/*/chat
+examples/*/file-transfer
+examples/*/simple-p2p
+
+# Received files from examples
+received_*

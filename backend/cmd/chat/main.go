@@ -122,9 +122,14 @@ func main() {
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Printf("%sType your message and press Enter. Type /quit to exit.%s\n\n", chat.ColorGray, chat.ColorReset)
 
+	// Create downloads directory
+	downloadsDir := "./downloads"
+	os.MkdirAll(downloadsDir, 0755)
+
 	// Create chat session
 	session := chat.NewSession(conn, chat.SessionConfig{
-		Username: *username,
+		Username:  *username,
+		OutputDir: downloadsDir,
 		OnMessage: func(msg *chat.Message) {
 			// Clear current input line, print message, restore prompt
 			chat.ClearLine()
@@ -137,6 +142,10 @@ func main() {
 		OnError: func(err error) {
 			chat.ClearLine()
 			fmt.Printf("\n%s✗ Connection error: %v%s\n", chat.ColorRed, err, chat.ColorReset)
+		},
+		OnFileInfo: func(fileInfo *chat.FileInfo) bool {
+			// Auto-accept files for now (could add prompt here)
+			return true
 		},
 	})
 
@@ -171,7 +180,10 @@ func main() {
 
 		// Handle commands
 		if strings.HasPrefix(input, "/") {
-			switch strings.ToLower(input) {
+			parts := strings.Fields(input)
+			cmd := strings.ToLower(parts[0])
+
+			switch cmd {
 			case "/quit", "/exit", "/q":
 				fmt.Printf("%sDisconnecting...%s\n", chat.ColorYellow, chat.ColorReset)
 				session.Stop()
@@ -187,6 +199,15 @@ func main() {
 
 			case "/status":
 				printStatus(session)
+				continue
+
+			case "/send":
+				if len(parts) < 2 {
+					fmt.Printf("%sUsage: /send <filepath>%s\n", chat.ColorRed, chat.ColorReset)
+					continue
+				}
+				filePath := parts[1]
+				handleSendFile(session, filePath)
 				continue
 
 			default:
@@ -215,8 +236,59 @@ func printHelp() {
 	fmt.Println("  /quit, /exit, /q  - Disconnect and exit")
 	fmt.Println("  /clear            - Clear the screen")
 	fmt.Println("  /status           - Show connection status")
+	fmt.Println("  /send <filepath>  - Send a file to peer")
 	fmt.Println("  /help             - Show this help message")
 	fmt.Println()
+}
+
+func handleSendFile(session *chat.Session, filePath string) {
+	chat.ClearLine()
+	fmt.Printf("%sSending file: %s...%s\n", chat.ColorYellow, filePath, chat.ColorReset)
+
+	// Create progress bar
+	lastProgress := int64(0)
+	onProgress := func(progress *chat.FileProgress) {
+		percent := float64(progress.BytesSent) / float64(progress.FileSize) * 100
+		if progress.BytesSent-lastProgress > 1024*1024 || progress.BytesSent == progress.FileSize {
+			// Update every MB or on completion
+			chat.ClearLine()
+			speed := progress.Speed
+			speedStr := formatSpeed(speed)
+			fmt.Printf("\r%sProgress: %.1f%% (%s) - %s%s", chat.ColorCyan, percent, formatBytes(progress.BytesSent), speedStr, chat.ColorReset)
+			lastProgress = progress.BytesSent
+		}
+	}
+
+	err := session.SendFile(filePath, onProgress)
+	chat.ClearLine()
+	if err != nil {
+		fmt.Printf("%s✗ Error sending file: %v%s\n", chat.ColorRed, err, chat.ColorReset)
+	} else {
+		fmt.Printf("%s✓ File sent successfully!%s\n", chat.ColorGreen, chat.ColorReset)
+	}
+}
+
+func formatSpeed(bytesPerSec float64) string {
+	if bytesPerSec < 1024 {
+		return fmt.Sprintf("%.0f B/s", bytesPerSec)
+	}
+	if bytesPerSec < 1024*1024 {
+		return fmt.Sprintf("%.1f KB/s", bytesPerSec/1024)
+	}
+	return fmt.Sprintf("%.1f MB/s", bytesPerSec/(1024*1024))
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
 func printStatus(session *chat.Session) {

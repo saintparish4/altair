@@ -1,3 +1,6 @@
+// Copyright (c) 2025
+// SPDX-License-Identifier: MIT
+
 package main
 
 import (
@@ -5,8 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/saintparish4/altair/pkg/holepunch"
-	"github.com/saintparish4/altair/pkg/stun"
+	"github.com/saintparish4/altair/pkg/altair"
 	"github.com/saintparish4/altair/pkg/types"
 )
 
@@ -14,9 +16,7 @@ func connectCommand(args []string) error {
 	// Parse flags
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	peerAddr := fs.String("peer", "", "Remote peer's public endpoint (IP:PORT)")
-	stunServer := fs.String("stun", defaultSTUNServer, "STUN server for discovering public IP")
 	initiator := fs.Bool("initiator", false, "Whether this peer initiates the PING (default: false = responder)")
-	skipPingPong := fs.Bool("skip-test", false, "Skip the ping-pong test")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -36,10 +36,12 @@ func connectCommand(args []string) error {
 	fmt.Println("=== Altair P2P Connection ===")
 	fmt.Println()
 
+	// Create Altair client
+	client := altair.NewClient()
+
 	// Step 1: Discover our public endpoint
-	fmt.Printf("Step 1: Discovering public endpoint via STUN (%s)...\n", *stunServer)
-	client := stun.NewClient(*stunServer)
-	publicEndpoint, err := client.Discover()
+	fmt.Println("Step 1: Discovering public endpoint via STUN...")
+	publicEndpoint, err := client.DiscoverPublicEndpoint()
 	if err != nil {
 		return fmt.Errorf("STUN discovery failed: %w", err)
 	}
@@ -58,34 +60,14 @@ func connectCommand(args []string) error {
 	fmt.Println("  Both peers should run this command simultaneously!")
 	fmt.Println()
 
-	conn, err := holepunch.EstablishConnection(nil, remoteEndpoint)
+	conn, err := client.Connect(remoteEndpoint, *initiator)
 	if err != nil {
 		return fmt.Errorf("failed to establish connection: %w", err)
 	}
 	defer conn.Close()
 
 	fmt.Println()
-	fmt.Println("🎉 Connection established!")
-	fmt.Printf("✓ Direct UDP connection to %s\n", remoteEndpoint)
-	fmt.Println()
-
-	// Step 4: Optional ping-pong test
-	if !*skipPingPong {
-		fmt.Println("Step 4: Testing connection with PING-PONG...")
-
-		if *initiator {
-			fmt.Println("  [You are the INITIATOR - sending PING first]")
-		} else {
-			fmt.Println("  [You are the RESPONDER - waiting for PING]")
-		}
-
-		if err := holepunch.PingPong(conn, remoteEndpoint, *initiator); err != nil {
-			return fmt.Errorf("ping-pong test failed: %w", err)
-		}
-	}
-
-	fmt.Println()
-	fmt.Println("✓ Connection verified and ready for data exchange!")
+	fmt.Println("🎉 Connection established and verified!")
 	fmt.Println()
 	fmt.Println("Connection will remain open. Press Ctrl+C to close.")
 
@@ -121,13 +103,8 @@ func printConnectUsage() {
 	fmt.Println("                      Format: IP:PORT")
 	fmt.Println("                      Example: 203.0.113.5:54321")
 	fmt.Println()
-	fmt.Println("  --stun string       STUN server for IP discovery")
-	fmt.Println("                      (default: stun.l.google.com:19302)")
-	fmt.Println()
 	fmt.Println("  --initiator         This peer sends PING first (one peer must set this)")
 	fmt.Println("                      (default: false = responder mode)")
-	fmt.Println()
-	fmt.Println("  --skip-test         Skip the ping-pong connection test")
 	fmt.Println()
 	fmt.Println("Setup Instructions:")
 	fmt.Println("  1. Both peers run: altair discover")

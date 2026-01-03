@@ -80,7 +80,7 @@ altair/
 
 ├── cmd/
 
-│   └── main/
+│   └── altair/
 
 │       ├── main.go          # CLI application
 
@@ -234,7 +234,7 @@ go mod init github.com/yourusername/altair
 
 # Build the CLI
 
-go build -o altair ./cmd/main
+go build -o altair ./cmd/altair
 
 # Run tests
 

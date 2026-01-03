@@ -85,16 +85,13 @@ func TestDecodeInvalidMessage(t *testing.T) {
 }
 
 func TestMessageFormatTime(t *testing.T) {
-	// Use local time to match FormatTime() behavior
-	testTime := time.Date(2024, 1, 15, 14, 30, 45, 0, time.Local)
 	msg := &Message{
-		Timestamp: testTime.UnixMilli(),
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC).UnixMilli(),
 	}
 
 	formatted := msg.FormatTime()
-	expected := testTime.Format("15:04:05")
-	if formatted != expected {
-		t.Errorf("expected '%s', got '%s'", expected, formatted)
+	if formatted != "14:30:45" {
+		t.Errorf("expected '14:30:45', got '%s'", formatted)
 	}
 }
 

@@ -1,83 +1,100 @@
-.PHONY: all build test test-layer1 test-layer2 test-chat test-transfer test-coverage clean run-discover run-xor-demo help-connect build-chat build-transfer fmt lint help
+.PHONY: all build build-signaling build-chat test test-coverage clean install examples fmt lint help chat
 
 # Default target
 all: build test
 
 # Build the CLI binary
 build:
-	@echo "Building altair..."
-	@cd backend && go build -o ../altair ./cmd/main
-	@echo "✓ Binary created: ./altair"
+	@echo "Building altair CLI..."
+	@cd backend && go build -o ../bin/altair ./cmd/altair
+	@echo "✓ Binary created: ./bin/altair"
 
-# Run tests
+# Build signaling server
+build-signaling:
+	@echo "Building signaling server..."
+	@cd backend && go build -o ../bin/altair-signaling ./cmd/signaling
+	@echo "✓ Binary created: ./bin/altair-signaling"
+
+# Build chat application
+build-chat:
+	@echo "Building chat application..."
+	@cd backend && go build -o ../bin/altair-chat ./cmd/chat
+	@echo "✓ Binary created: ./bin/altair-chat"
+
+# Build all examples
+examples:
+	@echo "Building examples..."
+	@mkdir -p bin/examples
+	@cd examples/simple-p2p && go build -o ../../bin/examples/simple-p2p
+	@cd examples/chat && go build -o ../../bin/examples/chat
+	@cd examples/file-transfer && go build -o ../../bin/examples/file-transfer
+	@echo "✓ Examples built in ./bin/examples/"
+
+# Run all tests
 test:
 	@echo "Running all tests..."
-	@cd backend && go test ./pkg/... -v
-
-# Test only Layer 1 (STUN)
-test-layer1:
-	@echo "Running Layer 1 (STUN) tests..."
-	@cd backend && go test ./pkg/stun -v
-
-# Test only Layer 2 (Hole Punching)
-test-layer2:
-	@echo "Running Layer 2 (Hole Punching) tests..."
-	@cd backend && go test ./pkg/holepunch -v
-
-# Test chat package
-test-chat:
-	@echo "Running chat package tests..."
-	@cd backend && go test ./pkg/chat -v
-
-# Test transfer package
-test-transfer:
-	@echo "Running transfer package tests..."
-	@cd backend && go test ./pkg/transfer -v
+	@cd backend && go test ./... -v
 
 # Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	@cd backend && go test ./pkg/... -cover -coverprofile=../coverage.out
+	@cd backend && go test ./... -race -coverprofile=../coverage.out -covermode=atomic
 	@cd backend && go tool cover -html=../coverage.out -o ../coverage.html
 	@echo "✓ Coverage report: coverage.html"
 
-# Build chat binary
-build-chat:
-	@echo "Building altair-chat..."
-	@cd backend && go build -o ../altair-chat ./cmd/chat
-	@echo "✓ Binary created: ./altair-chat"
+# Install CLI globally
+install: build
+	@echo "Installing altair..."
+	@cd backend && go install ./cmd/altair
+	@echo "✓ Installed altair to GOPATH/bin"
 
-# Build transfer binary
-build-transfer:
-	@echo "Building altair-transfer..."
-	@cd backend && go build -o ../altair-transfer ./cmd/transfer
-	@echo "✓ Binary created: ./altair-transfer"
+# Run signaling server
+serve: build-signaling
+	@echo "Starting signaling server on :8080..."
+	@./bin/altair-signaling
+
+# Run chat application
+# Usage: make chat ARGS="--username Alice --listen :9000"
+# Usage: make chat ARGS="--username Bob --peer 127.0.0.1:9000"
+# Usage: make chat ARGS="--username Alice --room my-room --signaling ws://localhost:8080/ws"
+chat: build-chat
+	@if [ -z "$(ARGS)" ]; then \
+		echo ""; \
+		echo "❌ Error: ARGS parameter is required"; \
+		echo ""; \
+		echo "Usage: make chat ARGS=\"--username NAME [options]\""; \
+		echo ""; \
+		echo "Examples:"; \
+		echo "  make chat ARGS=\"--username Alice --listen :9000\""; \
+		echo "  make chat ARGS=\"--username Bob --peer 127.0.0.1:9000\""; \
+		echo "  make chat ARGS=\"--username Alice --room my-room --signaling ws://localhost:8080/ws\""; \
+		echo ""; \
+		echo "Required flags:"; \
+		echo "  --username string    Your display name (required)"; \
+		echo ""; \
+		echo "Connection modes (choose one):"; \
+		echo "  --listen string     Address to listen on (responder mode)"; \
+		echo "  --peer string       Peer address to connect to (initiator mode)"; \
+		echo "  --room string       Room ID for signaling server (requires --signaling)"; \
+		echo "  --signaling string  Signaling server WebSocket URL"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "Starting chat application..."
+	@./bin/altair-chat $(ARGS)
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	@rm -f altair altair-chat altair-transfer coverage.out coverage.html
+	@rm -rf bin/ coverage.out coverage.html
+	@rm -f altair altair-* received_* altair-chat
 	@echo "✓ Clean complete"
-
-# Run the discover command
-run-discover: build
-	@echo "Running STUN discovery..."
-	@./altair discover
-
-# Run the XOR encoding demo
-run-xor-demo:
-	@echo "Running XOR encoding demonstration..."
-	@cd backend && go run examples/xor-demo.go
-
-# Show connect command help
-help-connect: build
-	@echo "Showing connect command help..."
-	@./altair connect --help
 
 # Format code
 fmt:
 	@echo "Formatting code..."
 	@cd backend && go fmt ./...
+	@cd examples && go fmt ./...
 	@echo "✓ Formatting complete"
 
 # Run linter (requires golangci-lint)
@@ -86,22 +103,40 @@ lint:
 	@cd backend && golangci-lint run
 	@echo "✓ Linting complete"
 
+# Run quick discovery test
+discover: build
+	@echo "Running STUN discovery..."
+	@./bin/altair discover
+
+# Show version
+version: build
+	@./bin/altair version
+
 # Show help
 help:
+	@echo "Altair - P2P NAT Traversal Library"
+	@echo ""
 	@echo "Available targets:"
-	@echo "  make build          - Build the altair binary"
+	@echo "  make build           - Build the altair CLI binary"
+	@echo "  make build-signaling - Build the signaling server"
+	@echo "  make build-chat     - Build the chat application"
+	@echo "  make examples       - Build all example applications"
 	@echo "  make test           - Run all unit tests"
-	@echo "  make test-layer1    - Run Layer 1 (STUN) tests only"
-	@echo "  make test-layer2    - Run Layer 2 (Hole Punching) tests only"
-	@echo "  make test-chat      - Run chat package tests only"
-	@echo "  make test-transfer  - Run transfer package tests only"
 	@echo "  make test-coverage  - Run tests with coverage report"
-	@echo "  make build-chat     - Build the altair-chat binary"
-	@echo "  make build-transfer  - Build the altair-transfer binary"
+	@echo "  make install        - Install altair CLI to GOPATH/bin"
+	@echo "  make serve          - Run signaling server"
+	@echo "  make chat           - Run chat application (requires ARGS)"
 	@echo "  make clean          - Remove build artifacts"
-	@echo "  make run-discover   - Run STUN discovery"
-	@echo "  make run-xor-demo   - Run XOR encoding demo"
-	@echo "  make help-connect   - Show connect command help"
-	@echo "  make fmt            - Format code"
+	@echo "  make fmt            - Format all code"
 	@echo "  make lint           - Run linter (requires golangci-lint)"
+	@echo "  make discover       - Quick STUN discovery test"
+	@echo "  make version        - Show version"
 	@echo "  make help           - Show this help message"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make build && ./bin/altair discover"
+	@echo "  make examples && ./bin/examples/simple-p2p discover"
+	@echo "  make serve  # Start signaling server"
+	@echo "  make chat ARGS=\"--username Alice --listen :9000\"  # Start chat in responder mode"
+	@echo "  make chat ARGS=\"--username Bob --peer 127.0.0.1:9000\"  # Connect to peer"
+	@echo "  make chat ARGS=\"--username Alice --room my-room --signaling ws://localhost:8080/ws\"  # Use signaling server"

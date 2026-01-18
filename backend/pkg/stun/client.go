@@ -1,288 +1,200 @@
 package stun
 
 import (
-	"crypto/rand"
-	"encoding/binary"
 	"fmt"
 	"net"
 	"time"
-
-	"github.com/saintparish4/altair/pkg/types"
 )
 
-const (
-	// STUN message constants from RFC 5389
-	magicCookie         = 0x2112A442
-	bindingRequest      = 0x0001
-	bindingResponse     = 0x0101
-	xorMappedAddress    = 0x0020
-	messageHeaderSize   = 20
-	transactionIDSize   = 12
-	attributeHeaderSize = 4
-
-	// Address family constants
-	familyIPv4 = 0x01
-	familyIPv6 = 0x02
-)
-
-// Client represents a STUN client
-type Client struct {
-	ServerAddr string
-	Timeout    time.Duration
+// Endpoint represents a discovered network endpoint
+type Endpoint struct {
+	LocalAddr  *net.UDPAddr
+	PublicAddr *net.UDPAddr
+	ServerAddr *net.UDPAddr
 }
+
+// Client is a STUN client for discovering public endpoints
+type Client struct {
+	conn       *net.UDPConn
+	serverAddr *net.UDPAddr
+	timeout    time.Duration
+}
+
+// ClientConfig holds configuration for creating a STUN client
+type ClientConfig struct {
+	ServerAddr string        // STUN server address (host:port)
+	LocalAddr  string        // Optional local address to bind to
+	Timeout    time.Duration // Request timeout
+}
+
+// DefaultTimeout is the default timeout for STUN requests
+const DefaultTimeout = 5 * time.Second
 
 // NewClient creates a new STUN client
-func NewClient(serverAddr string) *Client {
+func NewClient(config *ClientConfig) (*Client, error) {
+	if config.Timeout == 0 {
+		config.Timeout = DefaultTimeout
+	}
+
+	// Resolve server address
+	serverAddr, err := net.ResolveUDPAddr("udp", config.ServerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve server address: %w", err)
+	}
+
+	// Create UDP connection
+	var localAddr *net.UDPAddr
+	if config.LocalAddr != "" {
+		localAddr, err = net.ResolveUDPAddr("udp", config.LocalAddr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve local address: %w", err)
+		}
+	}
+
+	conn, err := net.ListenUDP("udp", localAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create UDP connection: %w", err)
+	}
+
 	return &Client{
-		ServerAddr: serverAddr,
-		Timeout:    5 * time.Second,
-	}
-}
-
-// Discover performs STUN discovery to find the public endpoint
-func (c *Client) Discover() (*types.Endpoint, error) {
-	// Resolve STUN server address
-	serverAddr, err := net.ResolveUDPAddr("udp", c.ServerAddr)
-	if err != nil {
-		return nil, types.NewSTUNError("resolve address", err)
-	}
-
-	// Create a UDP connection
-	conn, err := net.DialUDP("udp", nil, serverAddr)
-	if err != nil {
-		return nil, types.NewSTUNError("dial", err)
-	}
-	defer conn.Close()
-
-	// Set deadline
-	if err := conn.SetDeadline(time.Now().Add(c.Timeout)); err != nil {
-		return nil, types.NewSTUNError("set_deadline", err)
-	}
-
-	// Generate transaction ID
-	transactionID := make([]byte, transactionIDSize)
-	if _, err := rand.Read(transactionID); err != nil {
-		return nil, types.NewSTUNError("generate_transaction_id", err)
-	}
-
-	// Build and send Binding Request
-	request := buildBindingRequest(transactionID)
-	if _, err := conn.Write(request); err != nil {
-		return nil, types.NewSTUNError("send_request", err)
-	}
-
-	// Read response
-	response := make([]byte, 1500) // MTU size
-	n, err := conn.Read(response)
-	if err != nil {
-		return nil, types.NewSTUNError("read_response", err)
-	}
-
-	// Parse response
-	endpoint, err := parseBindingResponse(response[:n], transactionID)
-	if err != nil {
-		return nil, types.NewSTUNError("parse_response", err)
-	}
-
-	return endpoint, nil
-}
-
-// buildBindingRequest creates a STUN Binding Request message
-func buildBindingRequest(transactionID []byte) []byte {
-	// STUN message header (20 bytes):
-	// 0-1: Message Type
-	// 2-3: Message Length (0 for no attributes)
-	// 4-7: Magic Cookie
-	// 8-19: Transaction ID
-
-	msg := make([]byte, messageHeaderSize)
-
-	// Message Type (Binding Request = 0x0001)
-	binary.BigEndian.PutUint16(msg[0:2], bindingRequest)
-
-	// Message Length (0 for no attributes)
-	binary.BigEndian.PutUint16(msg[2:4], 0)
-
-	// Magic Cookie
-	binary.BigEndian.PutUint32(msg[4:8], magicCookie)
-
-	// Transaction ID (12 bytes)
-	copy(msg[8:20], transactionID)
-
-	return msg
-}
-
-// parseBindingResponse parses a STUN Binding Response and extracts the XOR-MAPPED-ADDRESS
-func parseBindingResponse(response []byte, expectedTransactionID []byte) (*types.Endpoint, error) {
-	// Validate minimum message size
-	if len(response) < messageHeaderSize {
-		return nil, fmt.Errorf("response too short: %d bytes", len(response))
-	}
-
-	// Parse header
-	messageType := binary.BigEndian.Uint16(response[0:2])
-	messageLength := binary.BigEndian.Uint16(response[2:4])
-	receivedMagicCookie := binary.BigEndian.Uint32(response[4:8])
-	receivedTransactionID := response[8:20]
-
-	// Verify this is a Binding Response
-	if messageType != bindingResponse {
-		return nil, fmt.Errorf("unexpected message type: 0x%04x (expected 0x%04x)", messageType, bindingResponse)
-	}
-
-	// Verify magic cookie
-	if receivedMagicCookie != magicCookie {
-		return nil, fmt.Errorf("invalid magic cookie: 0x%08x", receivedMagicCookie)
-	}
-
-	// Verify transaction ID matches
-	if !bytesEqual(receivedTransactionID, expectedTransactionID) {
-		return nil, fmt.Errorf("transaction ID mismatch")
-	}
-
-	// Verify message length
-	if len(response) < messageHeaderSize+int(messageLength) {
-		return nil, fmt.Errorf("incomplete message: got %d bytes, expected %d", len(response), messageHeaderSize+int(messageLength))
-	}
-
-	// Parse attributes
-	payload := response[messageHeaderSize : messageHeaderSize+int(messageLength)]
-	endpoint, err := parseAttributes(payload, receivedTransactionID)
-	if err != nil {
-		return nil, fmt.Errorf("parse attributes: %w", err)
-	}
-
-	if endpoint == nil {
-		return nil, fmt.Errorf("XOR-MAPPED-ADDRESS attribute not found")
-	}
-
-	return endpoint, nil
-}
-
-// parseAttributes parses STUN attributes and extracts XOR-MAPPED-ADDRESS
-func parseAttributes(payload []byte, transactionID []byte) (*types.Endpoint, error) {
-	pos := 0
-
-	for pos < len(payload) {
-		// Need at least 4 bytes for attribute header
-		if pos+attributeHeaderSize > len(payload) {
-			break
-		}
-
-		// Parse attribute header
-		attrType := binary.BigEndian.Uint16(payload[pos : pos+2])
-		attrLength := binary.BigEndian.Uint16(payload[pos+2 : pos+4])
-		pos += attributeHeaderSize
-
-		// Verify we have enough data for attribute value
-		if pos+int(attrLength) > len(payload) {
-			return nil, fmt.Errorf("incomplete attribute: type=0x%04x, length=%d", attrType, attrLength)
-		}
-
-		// Extract attribute value
-		attrValue := payload[pos : pos+int(attrLength)]
-
-		// Check if this is XOR-MAPPED-ADDRESS
-		if attrType == xorMappedAddress {
-			endpoint, err := decodeXORMappedAddress(attrValue, transactionID)
-			if err != nil {
-				return nil, fmt.Errorf("decode XOR-MAPPED-ADDRESS: %w", err)
-			}
-			return endpoint, nil
-		}
-
-		// Move to next attribute (attributes are padded to 4-byte boundaries)
-		pos += int(attrLength)
-		// Add padding to align to 4-byte boundary
-		if pad := int(attrLength) % 4; pad != 0 {
-			pos += 4 - pad
-		}
-	}
-
-	return nil, nil
-}
-
-// decodeXORMappedAddress decodes the XOR-MAPPED-ADDRESS attribute
-func decodeXORMappedAddress(value []byte, transactionID []byte) (*types.Endpoint, error) {
-	// XOR-MAPPED-ADDRESS format (RFC 5389 Section 15.2):
-	// 0: Reserved (8 bits)
-	// 1: Family (8 bits) - 0x01=IPv4, 0x02=IPv6
-	// 2-3: X-Port (16 bits)
-	// 4-7 (IPv4) or 4-19 (IPv6): X-Address
-
-	if len(value) < 4 {
-		return nil, fmt.Errorf("value too short: %d bytes", len(value))
-	}
-
-	// Parse family
-	family := value[1]
-
-	// Parse X-Port (XORed port)
-	xorPort := binary.BigEndian.Uint16(value[2:4])
-
-	// Decode port: XOR with most significant 16 bits of magic cookie
-	port := int(xorPort ^ uint16(magicCookie>>16))
-
-	var ip string
-
-	switch family {
-	case familyIPv4:
-		if len(value) < 8 {
-			return nil, fmt.Errorf("IPv4 address too short: %d bytes", len(value))
-		}
-
-		// Parse X-Address (XORed IPv4 address)
-		xorAddr := binary.BigEndian.Uint32(value[4:8])
-
-		// Decode address: XOR with magic cookie
-		addr := xorAddr ^ magicCookie
-
-		// Convert to IP string
-		ip = fmt.Sprintf("%d.%d.%d.%d",
-			byte(addr>>24),
-			byte(addr>>16),
-			byte(addr>>8),
-			byte(addr))
-
-	case familyIPv6:
-		if len(value) < 20 {
-			return nil, fmt.Errorf("IPv6 address too short: %d bytes", len(value))
-		}
-
-		// For IPv6, XOR with magic cookie (4 bytes) + transaction ID (12 bytes)
-		xorKey := make([]byte, 16)
-		binary.BigEndian.PutUint32(xorKey[0:4], magicCookie)
-		copy(xorKey[4:16], transactionID)
-
-		// XOR the address
-		addr := make([]byte, 16)
-		for i := 0; i < 16; i++ {
-			addr[i] = value[4+i] ^ xorKey[i]
-		}
-
-		// Convert to IP
-		ipAddr := net.IP(addr)
-		ip = ipAddr.String()
-
-	default:
-		return nil, fmt.Errorf("unsupported address family: 0x%02x", family)
-	}
-
-	return &types.Endpoint{
-		IP:   ip,
-		Port: port,
+		conn:       conn,
+		serverAddr: serverAddr,
+		timeout:    config.Timeout,
 	}, nil
 }
 
-// bytesEqual compares two byte slices
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
+// Discover performs endpoint discovery using a STUN binding request
+func (c *Client) Discover() (*Endpoint, error) {
+	// Create binding request
+	request, err := NewMessage(TypeBindingRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create binding request: %w", err)
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+
+	// Encode message
+	data, err := request.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	// Send request
+	_, err = c.conn.WriteToUDP(data, c.serverAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Set read deadline
+	if err := c.conn.SetReadDeadline(time.Now().Add(c.timeout)); err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
+	defer c.conn.SetReadDeadline(time.Time{}) // Clear deadline
+
+	// Wait for response
+	buf := make([]byte, 1500) // MTU size
+	n, _, err := c.conn.ReadFromUDP(buf)
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return nil, fmt.Errorf("STUN request timed out after %v", c.timeout)
+		}
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Decode response
+	response, err := Decode(buf[:n])
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Verify transaction ID matches
+	if response.TransactionID != request.TransactionID {
+		return nil, fmt.Errorf("transaction ID mismatch")
+	}
+
+	// Check response type
+	if response.Type != TypeBindingSuccess {
+		return nil, fmt.Errorf("received error response: %s", response.Type)
+	}
+
+	// Extract public address from XOR-MAPPED-ADDRESS
+	attr, found := response.GetAttribute(AttrXORMappedAddress)
+	if !found {
+		// Fallback to MAPPED-ADDRESS
+		attr, found = response.GetAttribute(AttrMappedAddress)
+		if !found {
+			return nil, fmt.Errorf("no address attribute in response")
+		}
+		publicAddr, err := DecodeMappedAddress(attr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode MAPPED-ADDRESS: %w", err)
+		}
+
+		return &Endpoint{
+			LocalAddr:  c.conn.LocalAddr().(*net.UDPAddr),
+			PublicAddr: publicAddr,
+			ServerAddr: c.serverAddr,
+		}, nil
+	}
+
+	publicAddr, err := DecodeXORMappedAddress(attr, request.TransactionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode XOR-MAPPED-ADDRESS: %w", err)
+	}
+
+	return &Endpoint{
+		LocalAddr:  c.conn.LocalAddr().(*net.UDPAddr),
+		PublicAddr: publicAddr,
+		ServerAddr: c.serverAddr,
+	}, nil
+}
+
+// DiscoverWithRetry attempts endpoint discovery with retry logic
+func (c *Client) DiscoverWithRetry(maxRetries int) (*Endpoint, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		endpoint, err := c.Discover()
+		if err == nil {
+			return endpoint, nil
+		}
+
+		lastErr = err
+
+		// Wait before retry (exponential backoff)
+		if attempt < maxRetries {
+			backoff := time.Duration(1<<uint(attempt)) * time.Second
+			if backoff > 10*time.Second {
+				backoff = 10 * time.Second
+			}
+			time.Sleep(backoff)
 		}
 	}
-	return true
+
+	return nil, fmt.Errorf("discovery failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// Close closes the STUN client and releases resources
+func (c *Client) Close() error {
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
+}
+
+// LocalAddr returns the local address the client is bound to
+func (c *Client) LocalAddr() *net.UDPAddr {
+	if c.conn != nil {
+		return c.conn.LocalAddr().(*net.UDPAddr)
+	}
+	return nil
+}
+
+// ServerAddr returns the STUN server address
+func (c *Client) ServerAddr() *net.UDPAddr {
+	return c.serverAddr
+}
+
+// String returns a string representation of the endpoint
+func (e *Endpoint) String() string {
+	return fmt.Sprintf("Local: %s, Public: %s (via %s)",
+		e.LocalAddr, e.PublicAddr, e.ServerAddr)
 }

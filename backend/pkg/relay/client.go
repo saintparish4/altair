@@ -59,9 +59,9 @@ type Client struct {
 	timeout time.Duration
 
 	// Receive buffer and handlers
-	recvBuf     []byte
+	recvBuf      []byte
 	recvHandlers map[string]func([]byte, *net.UDPAddr)
-	recvMu      sync.RWMutex
+	recvMu       sync.RWMutex
 
 	// State
 	closed bool
@@ -137,7 +137,7 @@ func (c *Client) Allocate(lifetime time.Duration) (*Allocation, error) {
 
 	// In a real implementation, this would send a TURN Allocate request
 	// For this simplified version, we simulate the allocation
-	
+
 	// Generate allocation ID
 	allocID := fmt.Sprintf("alloc-%d", time.Now().UnixNano())
 

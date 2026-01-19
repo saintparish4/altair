@@ -1,0 +1,5 @@
+- name: Run Integration Tests 
+  run: | 
+    go test -tags=integration -timeout 5m ./backend/test/integration/...
+  env: 
+    GO111MODULE: on 
